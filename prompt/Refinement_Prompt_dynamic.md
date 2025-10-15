@@ -3,7 +3,6 @@
  - There are functional errors or test failures, please first analyze the original assembly code to determine its intended behavior. Make
    sure that IR can pass all the given test cases.
  - Preserve the SSA (Static Single Assignment) structure.
- - Ensure the IR is functionally correct.
  - Please output ONLY the corrected LLVM IR code.Do not include any explanations, comments, or annotations.
 ### LLVM IR:
 '''llvm
