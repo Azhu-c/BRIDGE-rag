@@ -12,7 +12,7 @@ LLVM IR:'''llvm {llvm ir}'''
 Assembly:'''asm {asm}'''
 LLVM IR:'''llvm {llvm ir}'''
 
-### Lift the source assembly code into LLVM IR func using the example,Output the corrected LLVM IR code with the necessary changes, without any commentary. 
+### Lift the source assembly code into LLVM IR func using the examples,output the corrected LLVM IR code without any commentary. 
 
  - Use proper LLVM IR syntax and SSA form.Variable names should avoid
    using numbers when possible.
