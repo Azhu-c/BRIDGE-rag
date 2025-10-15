@@ -1,4 +1,4 @@
-﻿### Lift the source assembly code into LLVM IR with no optimization(O0), using the provided asm-IR pair example as a functional reference.
+﻿### Lift the source assembly code into LLVM IR with no optimization(O0), using the provided asm-IR pair example as reference.
 
 ### Example 1:
 Assembly:'''asm {asm}'''
