@@ -11,7 +11,7 @@ This directory provides **supplementary experiments and demonstrations**, includ
 
 ### **Evaluation_Datasets/**
 
-This directory contains **all evaluation datasets** used in the experiments (as described in **Section VI.A** of the paper). These datasets are used for evaluating the model’s effectiveness under different scenarios and configurations.
+This directory contains **all evaluation datasets** used in the experiments (as described in **Section VI.A** of the paper). 
 
 ### **Prompts/**
 
