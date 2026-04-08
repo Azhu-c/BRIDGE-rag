@@ -34,15 +34,10 @@ def fix_llvm_ir_errors(ir_content):
 def fix_metadata_errors(ir_content):
     """metadata"""
     original_content = ir_content
-
     ir_content = re.sub(r',\s*!llvm\.loop\s+![0-9]+', '', ir_content)
-    
     ir_content = re.sub(r',\s*!dbg\s+![0-9]+', '', ir_content)
-
     ir_content = re.sub(r',\s*![0-9]+\s*$', '', ir_content, flags=re.MULTILINE)
-
     ir_content = re.sub(r'\s+![0-9]+\s*$', '', ir_content, flags=re.MULTILINE)
-    
     ir_content = re.sub(r',\s*,', ',', ir_content)  # comment removed
     ir_content = re.sub(r',\s*\n', '\n', ir_content)  # comment removed
     
@@ -50,16 +45,6 @@ def fix_metadata_errors(ir_content):
         print("metadata")
     
     return ir_content
-
-
-# def clean_asm(asm):
-#     asm_clean = " "
-#     for tmp in asm.split("\n"):   
-#         tmp_asm = re.sub(r'^\s*[\da-fA-F]+:\s*', '', tmp, flags=re.MULTILINE)
-#         asm_clean += tmp_asm + "\n"
-#     asm = asm_clean
-#     return asm
-
 
 def hex_to_decimal(matched):
     return str(int(matched.group(), 16))
@@ -137,7 +122,7 @@ def normalize_asm(asm):
 
 
 #RAG
-def load_llm_model(model_name='/data2/zxa/new_em/Nova-1.3b-new-arm',base_tokenizer_name='deepseek-ai/deepseek-coder-1.3b-base',device='cuda'):
+def load_llm_model(model_name='/path/to/Nova-1.3b-new-arm',base_tokenizer_name='deepseek-ai/deepseek-coder-1.3b-base',device='cuda'):
     tokenizer = AutoTokenizer.from_pretrained(
         base_tokenizer_name,
         trust_remote_code=True
@@ -268,14 +253,14 @@ def read_and_compile_json(json_file):
     })
 
     asm_tokenizer, asm_model, ID= load_llm_model()
-    index_file = "/data2/zxa/rag_final_dataset/rag-data/nova_bb_arm_0128.index"
-    mapping_file = "/data2/zxa/rag_final_dataset/rag-data/nova_ir_0_arm_0128.pkl"
-    mapping_file_asm = "/data2/zxa/rag_final_dataset/rag-data/nova_asm_0_arm_0128.pkl"
+    index_file = "/path/to/index_file.index"
+    mapping_file = "/path/to/ir_files.pkl"
+    mapping_file_asm = "/path/to/asm_files.pkl"
     index, ir_bb_list, asm_bb_list = load_index_and_mapping(index_file, mapping_file, mapping_file_asm)
 
 
     #mbppAPI
-    client = OpenAI(api_key="sk-6cf49ef105fb4032a1f6d8a8dad4eb17", base_url="https://api.deepseek.com")
+    client = OpenAI(api_key="...", base_url="https://api.deepseek.com")
 
     # Iterate through each entry in the JSON data
     for i, entry in enumerate(data):
