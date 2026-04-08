@@ -1,0 +1,32 @@
+project:
+  name: binary-lifting
+  stage: knowledge_base
+
+environment:
+  dotenv_path: default.env
+  model_cache_dir: ./.cache/huggingface
+  llvm_tmp_dir: /tmp
+
+input:
+  source_dir: ./data/exebench_samples
+
+preprocess:
+  enabled: true
+  jobs: 8
+
+cfg_dataset:
+  output_json: ./artifacts/knowledge_base/aligned_blocks.json
+  optimization_levels: [3]
+  ir_suffix: _0.ll
+
+deduplication:
+  output_json: ./artifacts/knowledge_base/aligned_blocks_dedup.json
+  sqlite_db: ./artifacts/knowledge_base/dedup_cache.db
+  ir_bb_max_len: 10000
+  similarity_threshold: 0.95
+  num_perm: 128
+
+vector_index:
+  output_dir: ./artifacts/knowledge_base/index
+  model_name: /path/to/Nova-1.3b-new-arm
+  base_tokenizer_name: deepseek-ai/deepseek-coder-1.3b-base
