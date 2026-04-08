@@ -1,7 +1,5 @@
 import os
-os.environ['TRANSFORMERS_CACHE'] = '/data2/zxa/model'
 import sys
-sys.path.append('/data2/zxa/rag_final_dataset/finetune/Artcode')
 import json
 import subprocess
 import tempfile
