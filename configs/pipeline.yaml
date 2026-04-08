@@ -11,7 +11,7 @@ environment:
 
 pipeline:
   stage: all   # lift | refine | all
-  input_json: ./artifacts/pipeline/input.json
+  input_json: ../../Evaluation_datasets/x86_64/Humaneval_x86.json
 
 lift:
   enabled: true
