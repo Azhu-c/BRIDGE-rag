@@ -28,5 +28,5 @@ deduplication:
 
 vector_index:
   output_dir: ./artifacts/knowledge_base/index
-  model_name: /path/to/Nova-1.3b-new-arm
+  model_name: /path/to/Nova-1.3b
   base_tokenizer_name: deepseek-ai/deepseek-coder-1.3b-base
