@@ -1,19 +1,12 @@
 #!/usr/bin/env python3
 """Run binary lifting and iterative refinement from a YAML configuration."""
-import argparse
-import os
-from pathlib import Path
+from __future__ import annotations
 
-import yaml
-from dotenv import load_dotenv
+import argparse
 
 from src.binlift.rag_lifter import read_and_compile_json
 from src.refinement.refinement_pipeline import run_refinement
-
-
-def load_config(config_path: str) -> dict:
-    with open(config_path, "r", encoding="utf-8") as f:
-        return yaml.safe_load(f) or {}
+from src.utils.config import apply_environment, load_yaml_config, resolve_llm_settings
 
 
 def parse_args():
@@ -26,37 +19,53 @@ def parse_args():
 
 def main():
     args = parse_args()
-    config = load_config(args.config)
-
-    env_cfg = config.get("environment", {})
-    dotenv_path = env_cfg.get("dotenv_path")
-    if dotenv_path and Path(dotenv_path).exists():
-        load_dotenv(dotenv_path)
-
-    model_cache_dir = os.environ.get("MODEL_CACHE_DIR") or env_cfg.get("model_cache_dir")
-    if model_cache_dir:
-        os.environ.setdefault("TRANSFORMERS_CACHE", model_cache_dir)
-    llvm_tmp_dir = os.environ.get("LLVM_TMP_DIR") or env_cfg.get("llvm_tmp_dir")
-    if llvm_tmp_dir:
-        os.environ.setdefault("TMPDIR", llvm_tmp_dir)
+    config = apply_environment(load_yaml_config(args.config))
 
     pipeline_cfg = config.get("pipeline", {})
+    lift_cfg = config.get("lift", {})
     refinement_cfg = config.get("refinement", {})
-    input_json = args.json_path or pipeline_cfg.get("input_json") or os.environ.get("RAG_INPUT_JSON")
+    llm_cfg = resolve_llm_settings(config, section_name="llm")
+    input_json = args.json_path or pipeline_cfg.get("input_json")
     if not input_json:
         raise ValueError("Missing input JSON. Set pipeline.input_json in the config or pass --json-path.")
 
     stage = args.stage or pipeline_cfg.get("stage", "all")
 
-    api_key_env_name = env_cfg.get("deepseek_api_key_env", "DEEPSEEK_API_KEY")
-    base_url_env_name = env_cfg.get("deepseek_base_url_env", "DEEPSEEK_BASE_URL")
-    api_key = refinement_cfg.get("api_key") or os.environ.get(api_key_env_name)
-    base_url = refinement_cfg.get("base_url") or os.environ.get(base_url_env_name) or "https://api.deepseek.com"
-
-    if stage in {"lift", "all"} and config.get("lift", {}).get("enabled", True):
-        read_and_compile_json(input_json)
+    if stage in {"lift", "all"} and lift_cfg.get("enabled", True):
+        read_and_compile_json(
+            json_file=input_json,
+            output_dir=lift_cfg.get("output_dir", "./artifacts/pipeline/lift_outputs"),
+            llm_model_path=lift_cfg.get("llm_model_path", "/path/to/Nova-1.3b-new-arm"),
+            llm_tokenizer_name=lift_cfg.get("llm_tokenizer_name", "deepseek-ai/deepseek-coder-1.3b-base"),
+            nova_module_dir=lift_cfg.get("nova_module_dir"),
+            model_device=lift_cfg.get("device"),
+            index_file=lift_cfg.get("index_file", "/path/to/index_file.index"),
+            mapping_file=lift_cfg.get("mapping_file", "/path/to/ir_files.pkl"),
+            mapping_file_asm=lift_cfg.get("mapping_file_asm", "/path/to/asm_files.pkl"),
+            api_key=llm_cfg.get("api_key"),
+            base_url=llm_cfg.get("base_url"),
+            llm_model_name=llm_cfg.get("model_name"),
+            llm_timeout=int(llm_cfg.get("timeout", 300)),
+            llm_system_prompt=llm_cfg.get("system_prompt"),
+            command_timeout=int(lift_cfg.get("command_timeout", 200)),
+            temp_dir=lift_cfg.get("temp_dir", "/tmp"),
+            clang_target=lift_cfg.get("clang_target", "aarch64-linux-gnu"),
+            qemu_binary=lift_cfg.get("qemu_binary", "qemu-aarch64"),
+            qemu_library_path=lift_cfg.get("qemu_library_path", "/usr/aarch64-linux-gnu/"),
+        )
     if stage in {"refine", "all"} and refinement_cfg.get("enabled", True):
-        run_refinement(input_json, api_key=api_key, base_url=base_url)
+        run_refinement(
+            json_path=input_json,
+            input_ll_dir=refinement_cfg.get("input_ll_dir", "./artifacts/pipeline/lift_outputs"),
+            output_ll_dir=refinement_cfg.get("output_ll_dir", "./artifacts/pipeline/refined_outputs"),
+            file_pattern=refinement_cfg.get("file_pattern", "onlyfunc_{task_id}_{opt}.o.ll"),
+            retry_limit=int(refinement_cfg.get("retry_limit", 5)),
+            api_key=llm_cfg.get("api_key"),
+            base_url=llm_cfg.get("base_url"),
+            llm_model_name=llm_cfg.get("model_name"),
+            llm_timeout=int(llm_cfg.get("timeout", 300)),
+            temp_dir=refinement_cfg.get("temp_dir", "/tmp"),
+        )
 
 
 if __name__ == "__main__":

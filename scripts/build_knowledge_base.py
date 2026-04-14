@@ -1,21 +1,15 @@
 #!/usr/bin/env python3
 """Build the external knowledge base from a YAML configuration."""
-import argparse
-import os
-from pathlib import Path
+from __future__ import annotations
 
-import yaml
-from dotenv import load_dotenv
+import argparse
+from pathlib import Path
 
 from src.knowledge_base.preprocess import run_preprocess
 from src.knowledge_base.build_cfg_dataset import build_cfg_dataset
 from src.knowledge_base.deduplicate_dataset import deduplicate_dataset
 from src.knowledge_base.build_vector_index import build_vector_index
-
-
-def load_config(config_path: str) -> dict:
-    with open(config_path, "r", encoding="utf-8") as f:
-        return yaml.safe_load(f) or {}
+from src.utils.config import apply_environment, load_yaml_config
 
 
 def parse_args():
@@ -32,19 +26,7 @@ def ensure_parent(path_str: str) -> None:
 
 def main():
     args = parse_args()
-    config = load_config(args.config)
-
-    env_cfg = config.get("environment", {})
-    dotenv_path = env_cfg.get("dotenv_path")
-    if dotenv_path and Path(dotenv_path).exists():
-        load_dotenv(dotenv_path)
-
-    model_cache_dir = os.environ.get("MODEL_CACHE_DIR") or env_cfg.get("model_cache_dir")
-    if model_cache_dir:
-        os.environ.setdefault("TRANSFORMERS_CACHE", model_cache_dir)
-    llvm_tmp_dir = os.environ.get("LLVM_TMP_DIR") or env_cfg.get("llvm_tmp_dir")
-    if llvm_tmp_dir:
-        os.environ.setdefault("TMPDIR", llvm_tmp_dir)
+    config = apply_environment(load_yaml_config(args.config))
 
     source_dir = args.source_dir or config.get("input", {}).get("source_dir")
     if not source_dir:
@@ -69,24 +51,30 @@ def main():
         run_preprocess(source_dir, jobs=int(preprocess_cfg.get("jobs", 8)))
 
     build_cfg_dataset(
-        source_dir,
-        aligned_json,
+        input_dir=source_dir,
+        output_file=aligned_json,
         optimization_levels=dataset_cfg.get("optimization_levels", [3]),
         ir_suffix=dataset_cfg.get("ir_suffix", "_0.ll"),
     )
     deduplicate_dataset(
-        aligned_json,
-        dedup_json,
-        sqlite_db,
+        input_file=aligned_json,
+        output_file=dedup_json,
+        sqlite_db=sqlite_db,
         ir_bb_max_len=int(dedup_cfg.get("ir_bb_max_len", 10000)),
         similarity_threshold=float(dedup_cfg.get("similarity_threshold", 0.95)),
         num_perm=int(dedup_cfg.get("num_perm", 128)),
     )
     build_vector_index(
-        dedup_json,
-        index_dir,
+        input_json=dedup_json,
+        output_dir=index_dir,
         model_name=index_cfg.get("model_name", "/path/to/Nova-1.3b-new-arm"),
         base_tokenizer_name=index_cfg.get("base_tokenizer_name", "deepseek-ai/deepseek-coder-1.3b-base"),
+        nova_module_dir=index_cfg.get("nova_module_dir"),
+        index_filename=index_cfg.get("index_filename", "index_file.index"),
+        ir_mapping_filename=index_cfg.get("ir_mapping_filename", "ir_files.pkl"),
+        asm_mapping_filename=index_cfg.get("asm_mapping_filename", "asm_files.pkl"),
+        max_len=int(index_cfg.get("max_len", 1024)),
+        device=index_cfg.get("device"),
     )
 
 
