@@ -7,8 +7,7 @@ import re
 import editdistance
 import math
 from collections import defaultdict
-from openai import OpenAI
-from src.llm.llm_api import call_llm_disassembler
+from src.llm.llm_api import call_llm_disassembler, create_openai_client
 import concurrent.futures
 from transformers import AutoTokenizer, AutoModel
 import faiss
@@ -19,7 +18,7 @@ from modeling_nova import NovaTokenizer, NovaForCausalLM
 
 import traceback
 
-device = 'cuda' if torch.cuda.is_available() else 'cpu'  # comment removed
+DEFAULT_DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 
 def fix_llvm_ir_errors(ir_content):
@@ -34,10 +33,15 @@ def fix_llvm_ir_errors(ir_content):
 def fix_metadata_errors(ir_content):
     """metadata"""
     original_content = ir_content
+
     ir_content = re.sub(r',\s*!llvm\.loop\s+![0-9]+', '', ir_content)
+    
     ir_content = re.sub(r',\s*!dbg\s+![0-9]+', '', ir_content)
+
     ir_content = re.sub(r',\s*![0-9]+\s*$', '', ir_content, flags=re.MULTILINE)
+
     ir_content = re.sub(r'\s+![0-9]+\s*$', '', ir_content, flags=re.MULTILINE)
+    
     ir_content = re.sub(r',\s*,', ',', ir_content)  # comment removed
     ir_content = re.sub(r',\s*\n', '\n', ir_content)  # comment removed
     
@@ -45,6 +49,16 @@ def fix_metadata_errors(ir_content):
         print("metadata")
     
     return ir_content
+
+
+# def clean_asm(asm):
+#     asm_clean = " "
+#     for tmp in asm.split("\n"):   
+#         tmp_asm = re.sub(r'^\s*[\da-fA-F]+:\s*', '', tmp, flags=re.MULTILINE)
+#         asm_clean += tmp_asm + "\n"
+#     asm = asm_clean
+#     return asm
+
 
 def hex_to_decimal(matched):
     return str(int(matched.group(), 16))
@@ -122,7 +136,9 @@ def normalize_asm(asm):
 
 
 #RAG
-def load_llm_model(model_name='/path/to/Nova-1.3b-new-arm',base_tokenizer_name='deepseek-ai/deepseek-coder-1.3b-base',device='cuda'):
+def load_llm_model(model_name: str, base_tokenizer_name: str, device: str = DEFAULT_DEVICE, nova_module_dir: str | None = None):
+    if nova_module_dir and nova_module_dir not in sys.path:
+        sys.path.append(nova_module_dir)
     tokenizer = AutoTokenizer.from_pretrained(
         base_tokenizer_name,
         trust_remote_code=True
@@ -146,7 +162,7 @@ def load_llm_model(model_name='/path/to/Nova-1.3b-new-arm',base_tokenizer_name='
     ID = tokenizer.encode('<label-1>')[1]
 
     return nova_tokenizer, model, ID
-def asm_to_bert_vector(asm: str, nova_tokenizer, model, ID, device='cuda', max_len=1024):
+def asm_to_bert_vector(asm: str, nova_tokenizer, model, ID, device: str = DEFAULT_DEVICE, max_len: int = 1024):
     asm = asm.strip()
 
     char_types = ('0' * len('<func0>:') +'1' * (len(asm) - len('<func0>:')))
@@ -158,8 +174,8 @@ def asm_to_bert_vector(asm: str, nova_tokenizer, model, ID, device='cuda', max_l
 
     # input_ids = torch.LongTensor([input_ids]).to(device)
     # nova_attention_mask = torch.tensor([nova_attention_mask],dtype=torch.bool,device=device)
-    input_ids = torch.from_numpy(np.asarray(input_ids, dtype=np.int64)).unsqueeze(0).cuda()
-    nova_attention_mask = torch.as_tensor(nova_attention_mask, dtype=torch.bool).unsqueeze(0).cuda()
+    input_ids = torch.from_numpy(np.asarray(input_ids, dtype=np.int64)).unsqueeze(0).to(device)
+    nova_attention_mask = torch.as_tensor(nova_attention_mask, dtype=torch.bool).unsqueeze(0).to(device)
 
     with torch.no_grad():
         outputs = model(
@@ -230,7 +246,27 @@ def sanitize_prompt_ir(ir_content):
     return ir_content.strip()
 ##————————————————————————————————————————————————————————————————##
 
-def read_and_compile_json(json_file):
+def read_and_compile_json(
+    json_file: str,
+    output_dir: str,
+    llm_model_path: str,
+    llm_tokenizer_name: str,
+    index_file: str = "/path/to/index_file.index",
+    mapping_file: str = "/path/to/ir_files.pkl",
+    mapping_file_asm: str = "/path/to/asm_files.pkl",
+    api_key: str | None = None,
+    base_url: str = "https://api.deepseek.com",
+    llm_model_name: str = "deepseek-chat",
+    llm_timeout: int = 300,
+    llm_system_prompt: str | None = None,
+    command_timeout: int = 200,
+    temp_dir: str = "/tmp",
+    clang_target: str = "aarch64-linux-gnu",
+    qemu_binary: str = "qemu-aarch64",
+    qemu_library_path: str = "/usr/aarch64-linux-gnu/",
+    model_device: str = DEFAULT_DEVICE,
+    nova_module_dir: str | None = None,
+):
     # Read the JSON file
     with open(json_file, 'r') as f:
         data = json.load(f)
@@ -243,7 +279,7 @@ def read_and_compile_json(json_file):
     edit_similarities = [] # List to store edit similarities
     
     # Define a default timeout in seconds
-    COMMAND_TIMEOUT = 200 # 5 minutes
+    COMMAND_TIMEOUT = command_timeout
 
     stats_by_type = defaultdict(lambda: {
         'count': 0,
@@ -252,15 +288,16 @@ def read_and_compile_json(json_file):
         'edit_similarities': []
     })
 
-    asm_tokenizer, asm_model, ID= load_llm_model()
-    index_file = "/path/to/index_file.index"
-    mapping_file = "/path/to/ir_files.pkl"
-    mapping_file_asm = "/path/to/asm_files.pkl"
+    os.makedirs(output_dir, exist_ok=True)
+    os.makedirs(temp_dir, exist_ok=True)
+    asm_tokenizer, asm_model, ID = load_llm_model(
+        model_name=llm_model_path,
+        base_tokenizer_name=llm_tokenizer_name,
+        device=model_device,
+        nova_module_dir=nova_module_dir,
+    )
     index, ir_bb_list, asm_bb_list = load_index_and_mapping(index_file, mapping_file, mapping_file_asm)
-
-
-    #mbppAPI
-    client = OpenAI(api_key="...", base_url="https://api.deepseek.com")
+    client = create_openai_client(api_key=api_key or os.environ.get("DEEPSEEK_API_KEY", ""), base_url=base_url)
 
     # Iterate through each entry in the JSON data
     for i, entry in enumerate(data):
@@ -277,8 +314,8 @@ def read_and_compile_json(json_file):
 
         stats_by_type[test_type]['count'] += 1
         # Define paths for source C file and the executable - ARM version
-        source_c_dir = "./0129-arm_new_ds_rag_mbpp-new"
-        os.makedirs(source_c_dir, exist_ok=True) # Ensure the directory ex
+        source_c_dir = output_dir
+        os.makedirs(source_c_dir, exist_ok=True)
         
         func_executable_name = f"onlyfunc_{task_id}_{test_type}_exe"
         func_executable_path = os.path.join(source_c_dir, func_executable_name)
@@ -349,7 +386,7 @@ def read_and_compile_json(json_file):
 
 
         # Create temporary .c file for ir_test
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".c", dir="/data2/zxa/tmp") as c_temp_file:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".c", dir=temp_dir) as c_temp_file:
             c_temp_file_path = c_temp_file.name
             c_temp_file.write(ir_test.encode())
             print(f"Temporary .c file for ir_test generated: {c_temp_file_path}")
@@ -383,7 +420,7 @@ def read_and_compile_json(json_file):
         c_object_file = c_temp_file_path.replace('.c', '.o')
         try:
             result_c_compile = subprocess.run(
-                ['clang', '--target=aarch64-linux-gnu', '-c', c_temp_file_path, '-o', c_object_file],
+                ['clang', f'--target={clang_target}', '-c', c_temp_file_path, '-o', c_object_file],
                 capture_output=True, text=True, timeout=COMMAND_TIMEOUT
             )
 
@@ -408,7 +445,7 @@ def read_and_compile_json(json_file):
         output_binary = os.path.join(os.getcwd(), f"linked_binary_{task_id}_{test_type}_arm")
         try:
             result_link = subprocess.run(
-                ['clang', '--target=aarch64-linux-gnu', '-static',
+                ['clang', f'--target={clang_target}', '-static',
                  '-Wl,--allow-multiple-definition',
                  ll_object_file, c_object_file, '-o', output_binary, '-lm'],
                 capture_output=True, text=True, timeout=COMMAND_TIMEOUT
@@ -429,7 +466,7 @@ def read_and_compile_json(json_file):
                     # Note: You may need to use qemu-aarch64 or run on actual ARM64 hardware
                     # For cross-compiled ARM64 binaries on x86, use: ['qemu-aarch64', '-L', '/usr/aarch64-linux-gnu/', output_binary]
                     result_execute = subprocess.run(
-                        ['qemu-aarch64', '-L', '/usr/aarch64-linux-gnu/', output_binary],
+                        [qemu_binary, '-L', qemu_library_path, output_binary],
                         capture_output=True, text=True, check=False, timeout=COMMAND_TIMEOUT
                     )
 
@@ -482,7 +519,3 @@ def read_and_compile_json(json_file):
 
 
 
-# Example JSON file path
-#json_file_path = "/data2/zxa/zhangni/4eval_arm/output_json/arm/eval-source-164_arm.json"
-json_file_path = "/data2/zxa/zhangni/4eval_arm/output_json/arm/mbpp11-510_arm_rest.json"
-read_and_compile_json(json_file_path)

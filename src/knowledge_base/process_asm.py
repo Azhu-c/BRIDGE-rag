@@ -151,27 +151,3 @@ def probe_asm(probe_file, asm_file):
     asm_blocks = process_asm_with_probe_details(asm_text, probe_details) 
     return asm_blocks
 
-
-"""
-# 
-if __name__ == "__main__":
-    
-    with open("/data2/zxa/new/addfor_3.txt", "r") as f:
-        probe_text = f.read()
-    probe_details = extract_probe_details(probe_text)
-    for probe in probe_details:
-        print(probe)
-
-    with open("/data2/zxa/new/addfor_3.asm", "r") as f:
-        asm_text = f.read()
-    #asm_blocks = process_asm_with_probe_details(asm_text, probe_details)
-    asm_blocks = probe_asm("/data2/zxa/new/addfor_3.txt", "/data2/zxa/new/addfor_3.asm")
-    for func, blocks in asm_blocks.items():
-        print(f" {func}:")
-        for blk in blocks:
-            print("  :", blk["name"], "Index:", blk["index"])
-            print(type(blk["index"]))
-            print("  :")
-            print(blk["content"])
-            print("-" * 40)
-"""

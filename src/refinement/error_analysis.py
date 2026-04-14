@@ -150,29 +150,3 @@ def collect_source_errors(ir_text: str) -> List[str]:
 
     return errors
 
-
-"""
-# ---------------------------------------------------------------------------
-# CLI entry‑point
-# ---------------------------------------------------------------------------
-
-def main(argv: List[str] | None = None) -> None:
-    p = argparse.ArgumentParser(description="Collect static errors in LLVM IR")
-    p.add_argument("file", nargs="?", help="LLVM IR file; stdin if omitted")
-    p.add_argument("--print-ir", action="store_true", help="Echo IR before diagnostics")
-    args = p.parse_args(argv)
-
-    ir_text = (open(args.file, "r", encoding="utf-8", errors="ignore").read() if args.file else sys.stdin.read())
-    if args.print_ir:
-        print("=== LLVM IR ===\n" + ir_text + "\n=== End IR ===\n", file=sys.stderr)
-
-    errs = run_opt_verify(ir_text) + collect_source_errors(ir_text)
-    if errs:
-        print("\n".join(errs))
-        sys.exit(1)
-    print("No static errors detected.")
-    sys.exit(0)
-
-if __name__ == "__main__":
-    main()
-"""

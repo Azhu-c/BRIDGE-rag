@@ -84,21 +84,3 @@ def process_llvm_ir_cfg(ir_file):
     
     return functions
 
-"""
-# 
-if __name__ == "__main__":
-    #with open("/data2/zxa/100c_files/s_75_0.ll", "r") as f:
-        #ir_text = f.read()
-    
-    funcs = process_llvm_ir_cfg("/data2/zxa/100c_files/s_52_0.ll")
-    print(funcs)
-
-    for func in funcs:
-        print(":", func["name"])
-        for block in func["blocks"]:
-            print("  :", block["label"])
-            print("    :", block["probe_indexes"])
-            print("    :")
-            print(block["content"])
-            print("-" * 40)
-"""
