@@ -8,13 +8,13 @@ import editdistance
 import math
 from collections import defaultdict
 from src.llm.llm_api import call_llm_disassembler, create_openai_client
+from src.binlift.asm_partition import get_asm_blocks, new_partition
 import concurrent.futures
 from transformers import AutoTokenizer, AutoModel
 import faiss
 import pickle
 import torch
 import numpy as np
-from modeling_nova import NovaTokenizer, NovaForCausalLM
 
 import traceback
 
@@ -139,6 +139,8 @@ def normalize_asm(asm):
 def load_llm_model(model_name: str, base_tokenizer_name: str, device: str = DEFAULT_DEVICE, nova_module_dir: str | None = None):
     if nova_module_dir and nova_module_dir not in sys.path:
         sys.path.append(nova_module_dir)
+    from modeling_nova import NovaTokenizer, NovaForCausalLM
+
     tokenizer = AutoTokenizer.from_pretrained(
         base_tokenizer_name,
         trust_remote_code=True
@@ -234,17 +236,108 @@ def get_normalized_edit_similarity(ground_truth, pred):
     ed = editdistance.distance(gt, out)
     normalized = ed / max(len(gt), len(out))
     return 1 - normalized
-##——————————————————————————————————————————————————————————————##
 def sanitize_prompt_ir(ir_content):
-    """ RAG  IR， metadata/"""
+    """Remove metadata and declarations that are noisy in retrieval examples."""
     ir_content = fix_metadata_errors(ir_content)
     ir_content = re.sub(r'^\s*!\d+\s*=\s*.*$', '', ir_content, flags=re.MULTILINE)
     ir_content = re.sub(r'^\s*!llvm\..*$', '', ir_content, flags=re.MULTILINE)
-    ir_content = re.sub(r'^\s*declare\s+[^{\n]+$', '', ir_content, flags=re.MULTILINE)
+    ir_content = re.sub(r'^\s*declare\s+[^\{\n]+$', '', ir_content, flags=re.MULTILINE)
     ir_content = re.sub(r'^\s*@\.[^\n]*$', '', ir_content, flags=re.MULTILINE)
     ir_content = re.sub(r'\n{3,}', '\n\n', ir_content)
     return ir_content.strip()
-##————————————————————————————————————————————————————————————————##
+
+
+def retrieve_examples_for_asm_block(
+    asm_block: str,
+    asm_tokenizer,
+    asm_model,
+    label_token_id: int,
+    index,
+    ir_bb_list: list[str],
+    asm_bb_list: list[str],
+    device: str = DEFAULT_DEVICE,
+    top_k: int = 1,
+    max_len: int = 1024,
+) -> list[tuple[str, str]]:
+    """Retrieve IR/ASM examples for one structural assembly block."""
+    asm_em_input = normalize_asm(asm_block)
+    embedding = asm_to_bert_vector(
+        asm_em_input,
+        asm_tokenizer,
+        asm_model,
+        label_token_id,
+        device=device,
+        max_len=max_len,
+    )
+    embedding = np.asarray(embedding, dtype=np.float32)
+    if embedding.ndim == 1:
+        embedding = embedding.reshape(1, -1)
+
+    _, indices = index.search(embedding, top_k)
+    examples = []
+    for idx in indices[0]:
+        example_ir = sanitize_prompt_ir(ir_bb_list[idx])
+        example_asm = asm_bb_list[idx]
+        examples.append((example_ir, example_asm))
+    return examples
+
+
+def build_lifting_prompt(
+    asm_input: str,
+    asm_blocks: list[str],
+    asm_tokenizer,
+    asm_model,
+    label_token_id: int,
+    index,
+    ir_bb_list: list[str],
+    asm_bb_list: list[str],
+    device: str = DEFAULT_DEVICE,
+    retrieval_top_k: int = 1,
+    retrieval_max_len: int = 1024,
+) -> str:
+    """Build the RAG prompt by retrieving examples for each ASM block."""
+    prompt = (
+        "#Task: Translate the given ARM64 (aarch64-linux-gnu, little-endian) assembly into **one** LLVM IR function compiled at O0-O3.\n"
+        "#Requirements:\n"
+        "1. Output LLVM IR only, no explanations or comments.\n"
+        "2. Target architecture must remain ARM64; prefer i64/ptr types and alignments that match 64-bit ABI (e.g., align 8). Avoid emitting x86-specific constructs.\n"
+        "3. Do NOT introduce helpers, globals, or library calls that are absent from the assembly (e.g., @malloc, @strlen, @helper_func). Inline all logic inside the single function.\n"
+        "4. Remove/avoid metadata such as !llvm.* or !dbg and do not invent custom intrinsics (e.g., llvm.return.*).\n"
+        "5. Keep SSA names simple and ordered (e.g., %val0, %val1). Maintain strict type consistency—never treat an i64 as a ptr or vice versa.\n"
+        "6. If the assembly relies on SIMD instructions, rewrite the behavior as equivalent scalar loops.\n"
+        "7. For any contiguous stack allocation (e.g., stack frame size like 0xFA0 bytes), represent it using a single aggregate allocation. Do NOT expand such memory into many independent alloca instructions.\n"
+    )
+
+    prompt += "#Retrieved structure-aware ASM-IR examples:\n"
+    for block_id, asm_block in enumerate(asm_blocks, start=1):
+        examples = retrieve_examples_for_asm_block(
+            asm_block=asm_block,
+            asm_tokenizer=asm_tokenizer,
+            asm_model=asm_model,
+            label_token_id=label_token_id,
+            index=index,
+            ir_bb_list=ir_bb_list,
+            asm_bb_list=asm_bb_list,
+            device=device,
+            top_k=retrieval_top_k,
+            max_len=retrieval_max_len,
+        )
+        prompt += f"\n# ASM block {block_id}:\n'''asm\n{asm_block}\n'''\n"
+        for example_id, (example_ir, example_asm) in enumerate(examples, start=1):
+            prompt += (
+                f"# Retrieved example {block_id}.{example_id}:\n"
+                f"ir:'''llvm\n{example_ir}\n'''\n"
+                f"asm:'''asm\n{example_asm}\n'''\n"
+            )
+
+    prompt += (
+        "\n#Translate the full source ARM assembly into LLVM IR (follow all requirements above) and output IR only:\n"
+        "'''asm\n"
+        f"{asm_input}\n"
+        "'''\n"
+    )
+    return prompt
+
 
 def read_and_compile_json(
     json_file: str,
@@ -266,6 +359,11 @@ def read_and_compile_json(
     qemu_library_path: str = "/usr/aarch64-linux-gnu/",
     model_device: str = DEFAULT_DEVICE,
     nova_module_dir: str | None = None,
+    enable_asm_partition: bool = True,
+    dot_output_dir: str | None = None,
+    binary_path_key: str = "binary_path",
+    retrieval_top_k: int = 1,
+    retrieval_max_len: int = 1024,
 ):
     # Read the JSON file
     with open(json_file, 'r') as f:
@@ -325,40 +423,33 @@ def read_and_compile_json(
         disassembled_ll_file_path = f"{func_executable_path}-deepseek-rag.ll"
         try:
 
-            prompt = (
-                "#Task: Translate the given ARM64 (aarch64-linux-gnu, little-endian) assembly into **one** LLVM IR function compiled at  O0-O3.\n"
-                "#Requirements:\n"
-                "1. Output LLVM IR only, no explanations or comments.\n"
-                "2. Target architecture must remain ARM64; prefer i64/ptr types and alignments that match 64-bit ABI (e.g., align 8). Avoid emitting x86-specific constructs.\n"
-                "3. Do NOT introduce helpers, globals, or library calls that are absent from the assembly (e.g., @malloc, @strlen, @helper_func). Inline all logic inside the single function.\n"
-                "4. Remove/avoid metadata such as !llvm.* or !dbg and do not invent custom intrinsics (e.g., llvm.return.*).\n"
-                "5. Keep SSA names simple and ordered (e.g., %val0, %val1). Maintain strict type consistency—never treat an i64 as a ptr or vice versa.\n"
-                "6. If the assembly relies on SIMD instructions, rewrite the behavior as equivalent scalar loops.\n"
-                "7. For any contiguous stack allocation (e.g., stack frame size like 0xFA0 bytes), you must represent it using a single aggregate allocation, such as alloca [1000 x i32] or alloca i8, i64 4000 followed by appropriate bitcast / getelementptr. Do NOT expand such memory into many independent alloca instructions (e.g., val0, val1, ..., valN).\n"
-            )
-            asm_em_input = normalize_asm(asm_input)
-            new_embedding = asm_to_bert_vector(asm_em_input, asm_tokenizer, asm_model, ID, device, 1024)
-            #indices = index.search(new_embedding, 1)
-            #print(type(new_embedding))
-            new_embedding = np.asarray(new_embedding, dtype=np.float32)
-            if new_embedding.ndim == 1:
-                new_embedding = new_embedding.reshape(1, -1)
-            print(new_embedding.shape)
-            distances, indices = index.search(new_embedding, 1)
-            
-            prompt += f"#asm-IR pair Example:\n "
+            binary_path = entry.get(binary_path_key) or func_executable_path
+            dot_path = os.path.join(dot_output_dir or temp_dir, f"{task_id}_{test_type}.dot")
+            if dot_output_dir:
+                os.makedirs(dot_output_dir, exist_ok=True)
 
-            for i, idx in enumerate(indices[0]):
-                example_ir = sanitize_prompt_ir(ir_bb_list[idx])
-                prompt += f"ir:'''llvm\n{example_ir}\n'''\nasm:'''asm\n{asm_bb_list[idx]}\n'''"
-            prompt += (
-                "#Translate the source ARM assembly into LLVM IR (follow all requirements above) and output IR only:\n"
-                "'''asm\n"
-                f"{asm_input}\n"
-                "'''\n"
+            asm_blocks = get_asm_blocks(
+                asm=asm_input,
+                binary_path=binary_path,
+                dot_path=dot_path,
+                enable_partition=enable_asm_partition,
+            )
+            print(f"ASM partitioning produced {len(asm_blocks)} block(s) for {task_id}_{test_type}.")
+
+            prompt = build_lifting_prompt(
+                asm_input=asm_input,
+                asm_blocks=asm_blocks,
+                asm_tokenizer=asm_tokenizer,
+                asm_model=asm_model,
+                label_token_id=ID,
+                index=index,
+                ir_bb_list=ir_bb_list,
+                asm_bb_list=asm_bb_list,
+                device=model_device,
+                retrieval_top_k=retrieval_top_k,
+                retrieval_max_len=retrieval_max_len,
             )
             print(prompt)
-
             disassembled_ir_func = call_llm_disassembler(client, prompt)
 
             if not disassembled_ir_func.strip():
