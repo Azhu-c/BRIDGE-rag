@@ -33,31 +33,16 @@ def fix_llvm_ir_errors(ir_content):
 def fix_metadata_errors(ir_content):
     """metadata"""
     original_content = ir_content
-
     ir_content = re.sub(r',\s*!llvm\.loop\s+![0-9]+', '', ir_content)
-    
     ir_content = re.sub(r',\s*!dbg\s+![0-9]+', '', ir_content)
-
     ir_content = re.sub(r',\s*![0-9]+\s*$', '', ir_content, flags=re.MULTILINE)
-
     ir_content = re.sub(r'\s+![0-9]+\s*$', '', ir_content, flags=re.MULTILINE)
-    
     ir_content = re.sub(r',\s*,', ',', ir_content)  # comment removed
     ir_content = re.sub(r',\s*\n', '\n', ir_content)  # comment removed
-    
     if ir_content != original_content:
         print("metadata")
     
     return ir_content
-
-
-# def clean_asm(asm):
-#     asm_clean = " "
-#     for tmp in asm.split("\n"):   
-#         tmp_asm = re.sub(r'^\s*[\da-fA-F]+:\s*', '', tmp, flags=re.MULTILINE)
-#         asm_clean += tmp_asm + "\n"
-#     asm = asm_clean
-#     return asm
 
 
 def hex_to_decimal(matched):
