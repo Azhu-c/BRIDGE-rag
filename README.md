@@ -62,10 +62,13 @@ python scripts/run_pipeline.py --config configs/pipeline.yaml
 
 ## Citation
 ```bibtex
-@inproceedings{xiaoaozhu2026lifting,
-  title={Lifting Optimized Binaries to Canonical Compiler IR via Structure-Aware Retrieval and Iterative Verification},
-  author={XiaoAo, Zhu and Jie, Ren and ZhiQiang, Li and Jie, Zheng and ZhanYong, Tang and Zheng, Wang},
-  booktitle={Proceedings of the 64th Annual Meeting of the Association for Computational Linguistics},
-  year={2026}
+@inproceedings{zhu-etal-2026-lifting,
+    title = "Lifting Optimized Binaries to Canonical Compiler {IR} via Structure-Aware Retrieval and Iterative Verification",
+    author = "Zhu, Xiaoao  and Ren, Jie  and Li, Zhiqiang  and Zheng, Jie  and Tang, Zhanyong  and Wang, Zheng",
+    booktitle = "Proceedings of the 64th Annual Meeting of the {A}ssociation for {C}omputational {L}inguistics (Volume 1: Long Papers)",
+    month = jul,
+    year = "2026",
+    url = "https://aclanthology.org/2026.acl-long.527/",
+    pages = "11498--11516"
 }
 ```
